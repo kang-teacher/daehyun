@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>새김 · AI 생기부 도우미</title>
+  <meta name="description" content="관찰 기록만 넣으면 학교생활기록부 초안을 만들고, 기재요령 위반을 검사해 주는 교사용 AI 도우미">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#/home">
+        <img src="/img/logo.svg" alt="" width="32" height="32">
+        <span><b>새김</b><small>AI 생기부 도우미</small></span>
+      </a>
+      <nav class="nav" id="nav">
+        <a href="#/home" data-route="home"><i class="ic">⌂</i>홈</a>
+        <div class="nav-group">AI 생기부</div>
+        <a href="#/generate" data-route="generate"><i class="ic">✎</i>AI 생기부 생성</a>
+        <a href="#/records" data-route="records" class="sub">내 생기부 기록</a>
+        <a href="#/style" data-route="style" class="sub">내 스타일</a>
+        <a href="#/check" data-route="check"><i class="ic">✓</i>AI 생기부 검사기</a>
+        <div class="nav-group">도구</div>
+        <a href="#/chat" data-route="chat"><i class="ic">✉</i>AI 채팅</a>
+        <a href="#/settings" data-route="settings"><i class="ic">⚙</i>설정</a>
+      </nav>
+      <div class="side-foot">
+        <div class="privacy-badge">🔒 학생 이름·번호는<br>AI에 보내지 않아요</div>
+        <div class="server-status" id="serverStatus">서버 확인 중…</div>
+      </div>
+    </aside>
+    <div class="backdrop" id="backdrop"></div>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="menu-btn" id="menuBtn" aria-label="메뉴 열기">☰</button>
+        <a class="brand mini" href="#/home"><img src="/img/logo.svg" alt="" width="26" height="26"><b>새김</b></a>
+        <div class="topbar-right">
+          <a class="btn ghost sm" href="#/check">검사기</a>
+          <a class="btn primary sm" href="#/generate">생기부 만들기</a>
+        </div>
+      </header>
+      <main id="view" tabindex="-1"></main>
+      <footer class="footer">
+        <div>
+          <b>새김</b> · 교사를 위한 AI 학교생활기록부 도우미
+          <p>AI가 만든 문장은 초안입니다. 최종 기재 전에 학생 관찰 내용과 그해 기재요령을 확인해 주세요.</p>
+        </div>
+        <div class="footer-links">
+          <a href="#/home">홈</a><a href="#/generate">생성</a><a href="#/check">검사기</a><a href="#/settings">설정</a>
+        </div>
+      </footer>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
