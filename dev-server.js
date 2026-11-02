@@ -19,9 +19,10 @@ http.createServer(async (req, res) => {
     const name = url.pathname.slice(5).replace(/[^a-z]/g, '');
     try {
       const mod = await import(`./api/${name}.js`);
-      return mod.default(req, res);
-    } catch {
-      res.statusCode = 404; return res.end('not found');
+      return await mod.default(req, res);
+    } catch (e) {
+      console.error(e);
+      res.statusCode = 500; return res.end('server error');
     }
   }
   let p = normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, '');
