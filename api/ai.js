@@ -1,7 +1,7 @@
 import { askClaude, describeError, pickModel } from '../lib/claude.js';
 import { checkPassword, readJson, send } from '../lib/http.js';
 import {
-  TYPES, systemPrompt, generatePrompt, shortenPrompt, similarPrompt, SIMILAR_SCHEMA,
+  TYPES, systemPrompt, generatePrompt, shortenPrompt, expandPrompt, lengthRule, similarPrompt, SIMILAR_SCHEMA,
   checkSystemPrompt, CHECK_SCHEMA, CHAT_SYSTEM
 } from '../lib/prompts.js';
 import { neisBytes, sanitize } from '../public/js/core.js';
@@ -51,17 +51,28 @@ async function generate(b) {
   }
   const system = systemPrompt(b.schoolLevel);
   const user = generatePrompt(f);
-  let { text, model } = await askClaude({ system, messages: [{ role: 'user', content: user }], fast: !!b.fast });
+  const fast = !!b.fast;
+  const { min } = lengthRule(target);
+
+  // 대화를 이어 가며 분량을 맞춘다: 짧으면 재료 안에서 보강, 길면 줄이기. 최대 2번 고쳐 쓴다.
+  const messages = [{ role: 'user', content: user }];
+  let { text, model } = await askClaude({ system, messages, fast });
   text = cleanOutput(text);
   let bytes = neisBytes(text);
-  let shortened = false;
-  if (bytes > target) {
-    const r = await askClaude({ system, messages: [{ role: 'user', content: shortenPrompt(text, target) }], fast: !!b.fast });
-    text = cleanOutput(r.text);
-    bytes = neisBytes(text);
-    shortened = true;
+  const passes = [];
+  for (let i = 0; i < 2 && (bytes < min || bytes > target); i++) {
+    const action = bytes > target ? 'shorten' : 'expand';
+    messages.push({ role: 'assistant', content: text });
+    messages.push({ role: 'user', content: action === 'shorten' ? shortenPrompt(bytes, target) : expandPrompt(bytes, target) });
+    const r = await askClaude({ system, messages, fast, effort: 'low' });
+    const next = cleanOutput(r.text);
+    const nb = neisBytes(next);
+    passes.push(action);
+    // 보강하다 한도를 넘었으면 다음 차례에 줄이고, 그래도 넘으면 마지막 한도 안 결과를 쓴다.
+    if (nb > target && bytes <= target && i === 1) break;
+    text = next; bytes = nb;
   }
-  return { text, bytes, target, overLimit: bytes > target, shortened, model, sent: user };
+  return { text, bytes, target, min, overLimit: bytes > target, short: bytes < min, adjusted: passes, model, sent: user };
 }
 
 async function similar(b) {
@@ -92,7 +103,7 @@ async function check(b) {
   });
   const issues = (json.issues || []).filter((i) => i && i.found);
   const revised = cleanOutput(json.revised || '');
-  return { issues, revised, revisedBytes: neisBytes(revised), model };
+  return { issues, revised, revisedBytes: neisBytes(revised), summary: String(json.summary || ''), model };
 }
 
 async function chat(b) {

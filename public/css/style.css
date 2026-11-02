@@ -389,3 +389,21 @@ mark { background: #ffe1df; color: #b4232a; border-radius: 4px; padding: 1px 2px
 .hidden { display: none !important; }
 .seg { flex-wrap: wrap; }
 .seg button { white-space: nowrap; }
+
+/* 2026 기재요령 검사 */
+mark.red { background: #ffe1df; color: #b4232a; }
+mark.orange { background: #ffedd5; color: #9a3412; }
+mark.blue { background: #e0ecff; color: #1e40af; }
+.stat .v.orange { color: var(--warn); }
+.stat .v.blue { color: var(--primary); }
+.issue.sev-red { border-left: 4px solid var(--bad); }
+.issue.sev-orange { border-left: 4px solid var(--warn); }
+.issue.sev-blue { border-left: 4px solid var(--primary); }
+.issue-head b { font-size: 14px; }
+.issue dd.basis { color: var(--sub); font-size: 13px; }
+.autocheck { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font-size: 13.5px; background: #fafbfc; }
+.autocheck.ok { color: #087a55; background: var(--good-weak); border-color: transparent; }
+.autocheck ul { margin: 8px 0 0; padding-left: 0; list-style: none; display: grid; gap: 4px; }
+.spin.inline { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--primary); border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: #f8f9fb; }

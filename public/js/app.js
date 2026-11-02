@@ -1,5 +1,5 @@
-import { neisBytes, sanitize, maskedTotal, ruleCheck, endingCheck } from './core.js';
-import { GEN_TYPES, TYPE_LABEL, KEYWORDS, CHECK_AREAS, FAQ } from './data.js';
+import { neisBytes, sanitize, maskedTotal, ruleCheck, AREAS, REF } from './core.js';
+import { GEN_TYPES, TYPE_LABEL, KEYWORDS, FAQ } from './data.js';
 
 // ───────────────────────── 유틸 ─────────────────────────
 const $ = (s, el = document) => el.querySelector(s);
@@ -343,8 +343,9 @@ function renderForm() {
         <input type="text" id="genLabel" value="${esc(gen.label)}" placeholder="예: 3번 또는 이름"></div>
     </div>
     <div class="field"><label>목표 바이트 <span class="hint">나이스 기준</span></label>
-      <div class="range-row"><input type="range" id="targetRange" min="100" max="3000" step="50" value="${target}">
-      <input type="number" id="targetNum" min="100" max="4000" step="50" value="${target}"></div></div>`;
+      <div class="range-row"><input type="range" id="targetRange" min="150" max="${AREAS[t].bytes}" step="30" value="${target}">
+      <input type="number" id="targetNum" min="150" max="${AREAS[t].bytes}" step="30" value="${target}"></div>
+      ${limitNote(t)}</div>`;
   }
 
   if (t === 'behavior') {
@@ -384,7 +385,7 @@ function renderForm() {
   $$('[data-f]', card).forEach((el) => el.addEventListener('input', () => { gen.fields[el.dataset.f] = el.value; }));
   $('#genLabel')?.addEventListener('input', (e) => { gen.label = e.target.value; });
   const syncTarget = (v) => {
-    const n = Math.min(Math.max(parseInt(v, 10) || 100, 100), 4000);
+    const n = Math.min(Math.max(parseInt(v, 10) || 150, 150), AREAS[t].bytes);
     gen.targets[t] = n;
     $('#targetRange').value = n; $('#targetNum').value = n;
     if (gen.result) updateResultMeter();
@@ -496,15 +497,18 @@ function renderResult() {
   }
   const r = gen.result;
   card.innerHTML = `
-    <div class="card-title">결과 <span class="badge blue">${TYPE_LABEL[r.type]}</span>${r.shortened ? '<span class="badge orange">분량에 맞춰 줄임</span>' : ''}</div>
+    <div class="card-title">결과 <span class="badge blue">${TYPE_LABEL[r.type]}</span>${(r.adjusted || []).map((a) => `<span class="badge ${a === 'expand' ? 'green' : 'orange'}">${a === 'expand' ? '분량 보강' : '분량 줄임'}</span>`).join('')}</div>
     <textarea class="result-box" id="resultText">${esc(r.text)}</textarea>
     <div id="resultMeter"></div>
+    ${r.short ? `<div class="banner warn" style="margin-top:12px">입력한 재료만으로는 목표 분량(${r.min.toLocaleString()}바이트 이상)까지 늘리지 못했어요. 없는 사실을 지어내면 기재요령의 허위·과장 기재에 해당하므로, 관찰 기록이나 활동 내용을 더 넣고 다시 생성해 주세요.</div>` : ''}
+    <div id="autoCheck"></div>
     <div class="actions">
       <button class="btn primary" id="btnCopy">복사</button>
       <button class="btn" id="btnRegen">다시 생성</button>
       <button class="btn" id="btnSave">기록에 저장</button>
       <button class="btn ghost" id="btnToCheck">검사기로 점검</button>
     </div>
+    <p class="note">⚠️ ${esc(REF.ai)}: AI 생성 자료를 그대로 입력하지 말고, 학생의 실제 수행과 다른 허위·과장이 없는지 확인한 뒤 고쳐 쓰세요.</p>
     <details class="sent"><summary>AI로 보낸 내용 보기</summary>
       <div class="mask-info">🔒 ${esc(maskSummary(r.masked))} · 학생 이름·번호는 전송하지 않았습니다.</div>
       <pre>${esc(r.sent)}</pre></details>`;
@@ -515,7 +519,7 @@ function renderResult() {
   $('#btnSave').addEventListener('click', () => addRecord({ type: r.type, label: gen.label, text: gen.result.text }));
   $('#btnToCheck').addEventListener('click', () => {
     chk.text = gen.result.text; chk.mode = 'single'; chk.result = null;
-    chk.area = CHECK_AREAS[['behavior', 'subject', 'autonomy', 'club', 'career'].indexOf(r.type)] || chk.area;
+    chk.areaKey = AREAS[r.type] ? r.type : chk.areaKey;
     location.hash = '#/check';
   });
 }
@@ -524,6 +528,25 @@ function updateResultMeter() {
   const el = $('#resultMeter');
   if (!el || !gen.result) return;
   el.innerHTML = bytesMeter(neisBytes(gen.result.text), gen.targets[gen.result.type]);
+  // 결과를 고칠 때마다 기재요령 규칙으로 바로 점검한다.
+  const box = $('#autoCheck');
+  if (!box) return;
+  const issues = ruleCheck(gen.result.text, gen.result.type, neisBytes);
+  box.innerHTML = issues.length
+    ? `<div class="autocheck"><b>기재요령 자동 점검</b> ${['위반', '수정 권장', '확인 필요'].map((s) => { const n = issues.filter((i) => i.severity === s).length; return n ? `<span class="badge ${SEV_CLASS[s]}">${s} ${n}</span>` : ''; }).join(' ')}
+        <ul>${issues.slice(0, 6).map((i) => `<li><span class="badge ${SEV_CLASS[i.severity]}">${esc(i.severity)}</span> ${esc(i.type)}: "${esc(i.found)}" → ${esc(i.suggestion)}</li>`).join('')}</ul></div>`
+    : '<div class="autocheck ok">✓ 기재요령 자동 점검: 규칙상 걸리는 표현이 없어요. 맞춤법과 문맥은 검사기로 확인하세요.</div>';
+}
+
+function violBadge(text, type) {
+  if (!text) return '';
+  const n = ruleCheck(text, type, neisBytes).filter((i) => i.severity === '위반').length;
+  return n ? `<div style="margin-top:6px"><span class="badge red" title="기재요령 규칙 검사">위반 ${n}</span></div>` : '';
+}
+
+function limitNote(type) {
+  const a = AREAS[type];
+  return a ? `<p class="note">${esc(a.label)} 최대 ${a.chars}자(${a.bytes.toLocaleString()}바이트) · ${esc(REF.limits)}</p>` : '';
 }
 
 function addRecord({ type, label, text }) {
@@ -546,8 +569,8 @@ function renderMulti() {
         <div class="field"><label>종류</label>
           <div class="seg sm" id="mType">${types.map((t) => `<button data-v="${t.id}" class="${multi.type === t.id ? 'on' : ''}">${t.label}</button>`).join('')}</div></div>
         <div class="field"><label>목표 바이트 <span class="hint">나이스 기준</span></label>
-          <div class="range-row"><input type="range" id="mRange" min="100" max="3000" step="50" value="${multi.target}">
-          <input type="number" id="mNum" min="100" max="4000" step="50" value="${multi.target}"></div></div>
+          <div class="range-row"><input type="range" id="mRange" min="150" max="${AREAS[multi.type].bytes}" step="30" value="${multi.target}">
+          <input type="number" id="mNum" min="150" max="${AREAS[multi.type].bytes}" step="30" value="${multi.target}"></div>${limitNote(multi.type)}</div>
         <div id="mSubject" class="${multi.type === 'subject' ? '' : 'hidden'}">
           <div class="field"><label>과목 <span class="hint">공통</span></label><input type="text" data-c="subject" value="${esc(multi.common.subject)}" placeholder="예: 국어"></div>
           <div class="field"><label>공통 성취기준·평가요소</label><textarea data-c="standard" rows="3" placeholder="학급 전체에 공통으로 적용할 성취기준">${esc(multi.common.standard)}</textarea></div>
@@ -573,6 +596,7 @@ function renderMulti() {
           <button class="btn primary" id="mRun" ${multi.rows.length && !multi.running ? '' : 'disabled'}>일괄 생성 시작</button>
           <button class="btn" id="mStop" ${multi.running ? '' : 'disabled'}>중지</button>
           <button class="btn ghost" id="mDown" ${multi.rows.some((r) => r.result) ? '' : 'disabled'}>엑셀로 받기</button>
+          <button class="btn ghost" id="mToCheck" ${multi.rows.some((r) => r.result) ? '' : 'disabled'}>검사기로 모두 검사</button>
         </span></div>
       <progress id="mProg" value="${multi.rows.filter((r) => r.status === '완료' || r.status === '초과').length}" max="${multi.rows.length || 1}"></progress>
       <div class="note" id="mMsg"></div>
@@ -584,7 +608,7 @@ function renderMulti() {
     multi.target = GEN_TYPES.find((t) => t.id === multi.type).bytes;
     renderMulti();
   }));
-  const syncT = (v) => { multi.target = Math.min(Math.max(parseInt(v, 10) || 100, 100), 4000); $('#mRange').value = multi.target; $('#mNum').value = multi.target; renderMultiTable(); };
+  const syncT = (v) => { multi.target = Math.min(Math.max(parseInt(v, 10) || 150, 150), AREAS[multi.type].bytes); $('#mRange').value = multi.target; $('#mNum').value = multi.target; renderMultiTable(); };
   $('#mRange').addEventListener('input', (e) => syncT(e.target.value));
   $('#mNum').addEventListener('change', (e) => syncT(e.target.value));
   $$('[data-c]', body).forEach((el) => el.addEventListener('input', () => { multi.common[el.dataset.c] = el.value; }));
@@ -597,6 +621,10 @@ function renderMulti() {
   $('#mRun').addEventListener('click', runMulti);
   $('#mStop').addEventListener('click', () => { multi.stop = true; $('#mMsg').textContent = '지금 처리 중인 학생까지만 마치고 멈춥니다.'; });
   $('#mDown').addEventListener('click', downloadMulti);
+  $('#mToCheck').addEventListener('click', () => {
+    Object.assign(chk, { mode: 'multi', source: 'gen', areaKey: multi.type, multiResults: null });
+    location.hash = '#/check';
+  });
   renderMultiCols();
   renderMultiTable();
 }
@@ -632,18 +660,24 @@ function parseCsv(text) {
   return rows.filter((r) => r.some((c) => String(c).trim()));
 }
 
+/** 엑셀·CSV 파일을 2차원 배열로 읽는다. 첫 줄은 열 제목. */
+async function readTable(file) {
+  let table;
+  if (/\.csv$/i.test(file.name)) {
+    table = parseCsv(await file.text());
+  } else {
+    const XLSX = await loadXlsx();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    table = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' })
+      .filter((r) => r.some((c) => String(c).trim()));
+  }
+  if (table.length < 2) throw new Error('첫 줄 제목 아래에 학생 행이 없습니다.');
+  return table;
+}
+
 async function loadMultiFile(file) {
   try {
-    let table;
-    if (/\.csv$/i.test(file.name)) {
-      table = parseCsv(await file.text());
-    } else {
-      const XLSX = await loadXlsx();
-      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-      table = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' })
-        .filter((r) => r.some((c) => String(c).trim()));
-    }
-    if (table.length < 2) throw new Error('첫 줄 제목 아래에 학생 행이 없습니다.');
+    const table = await readTable(file);
     multi.headers = table[0].map((h, i) => String(h).trim() || `열${i + 1}`);
     multi.nameCol = multi.headers.findIndex((h) => NAME_COL.test(h));
     multi.include = multi.headers.map((h, i) => i !== multi.nameCol && !SKIP_COL.test(h));
@@ -685,8 +719,8 @@ function renderMultiTable() {
     ${multi.rows.map((r, i) => {
       const b = neisBytes(r.result);
       return `<tr><td><b>${esc(rowName(r, i))}</b><div class="note">${esc(rowMaterial(r).slice(0, 40))}${rowMaterial(r).length > 40 ? '…' : ''}</div></td>
-      <td>${r.result || r.status === '완료' ? `<textarea data-row="${i}">${esc(r.result)}</textarea>` : `<span class="note">${esc(r.error || '')}</span>`}</td>
-      <td>${r.result ? `<span class="byte-pill ${b > multi.target ? 'over' : ''}" id="mb${i}">${b} / ${multi.target}</span><div class="actions" style="margin-top:8px"><button class="btn sm" data-mcopy="${i}">복사</button></div>` : ''}</td>
+      <td>${r.result || r.status === '완료' ? `<textarea data-row="${i}">${esc(r.result)}</textarea>${r.error ? `<div class="note">⚠️ ${esc(r.error)}</div>` : ''}` : `<span class="note">${esc(r.error || '')}</span>`}</td>
+      <td>${r.result ? `<span class="byte-pill ${b > multi.target ? 'over' : ''}" id="mb${i}">${b} / ${multi.target}</span>${violBadge(r.result, multi.type)}<div class="actions" style="margin-top:8px"><button class="btn sm" data-mcopy="${i}">복사</button></div>` : ''}</td>
       <td><span class="badge ${badge(r.status)}">${esc(r.status)}</span>${r.status === '오류' || r.status === '완료' || r.status === '초과' ? `<div style="margin-top:6px"><button class="btn sm" data-redo="${i}">다시</button></div>` : ''}</td></tr>`;
     }).join('')}</tbody></table></div>`;
   $$('[data-row]', el).forEach((ta) => ta.addEventListener('input', () => {
@@ -717,6 +751,7 @@ async function generateRow(i) {
   try {
     const res = await api('generate', body);
     r.result = res.text; r.status = res.overLimit ? '초과' : '완료';
+    r.error = res.short ? '재료가 적어 목표 분량보다 짧아요' : '';
   } catch (e) {
     r.status = '오류'; r.error = e.message;
   }
@@ -784,146 +819,284 @@ function downloadTemplate() {
 
 // ───────────────────────── 검사기 ─────────────────────────
 const thisYear = new Date().getFullYear();
+const CHECK_KEYS = ['behavior', 'subject', 'autonomy', 'club', 'career', 'personal', 'daily'];
+const SEV_CLASS = { 위반: 'red', '수정 권장': 'orange', '확인 필요': 'blue' };
 const chk = {
-  mode: 'single', schoolLevel: settings.schoolLevel, year: String(Math.min(thisYear, 2027)), grade: '', area: CHECK_AREAS[0],
-  text: '', result: null, multiText: '', multiResults: null, running: false
+  mode: 'single', schoolLevel: settings.schoolLevel, year: String(Math.max(2026, Math.min(thisYear, 2027))), grade: '', areaKey: 'behavior',
+  text: '', result: null,
+  source: 'paste', multiText: '', file: null, items: [], multiResults: null, running: false, stop: false
 };
 
+function areaOptions(sel) {
+  return CHECK_KEYS.map((k) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${AREAS[k].label} (${AREAS[k].chars}자)</option>`).join('');
+}
+
 function renderCheck() {
-  const years = []; for (let y = 2021; y <= Math.max(thisYear + 1, 2026); y++) years.push(y);
+  const years = []; for (let y = 2021; y <= Math.max(thisYear + 1, 2027); y++) years.push(y);
   view.innerHTML = `
-    ${pageHead('AI 생기부 검사기', '기재요령에 어긋나는 표현을 찾아 이유와 수정안을 알려 드려요. 규칙 검사는 즉시, AI 검토는 이어서 진행됩니다.')}
+    ${pageHead('AI 생기부 검사기', '2026학년도 학교생활기록부 기재요령(고등학교)을 근거로 기재 불가 내용과 작성 방법 위반을 찾고, 쪽수와 수정안을 함께 보여 드려요.')}
     ${serverBanner()}
     <div class="toolbar">
       <div class="seg" id="chkMode">
         <button data-m="single" class="${chk.mode === 'single' ? 'on' : ''}">단일 검사</button>
         <button data-m="multi" class="${chk.mode === 'multi' ? 'on' : ''}">다중 검사</button>
       </div>
+      <span class="note" style="margin:0">규칙 검사는 즉시, AI 검토(맞춤법·문맥·근거 부족)는 이어서 진행돼요.</span>
     </div>
-    <div class="grid2">
+    <div class="${chk.mode === 'single' ? 'grid2' : ''}">
       <div class="card">
         <div class="row">
           <div class="field"><label>학교급</label><select id="cLevel">${['초등학교', '중학교', '고등학교'].map((l) => `<option ${chk.schoolLevel === l ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
           <div class="field"><label>작성 학년도</label><select id="cYear">${years.map((y) => `<option ${String(y) === chk.year ? 'selected' : ''}>${y}</option>`).join('')}</select></div>
-          <div class="field"><label>학년</label><select id="cGrade"><option value="">선택</option>${[1, 2, 3, 4, 5, 6].map((g) => `<option value="${g}" ${String(g) === chk.grade ? 'selected' : ''}>${g}학년</option>`).join('')}</select></div>
+          <div class="field"><label>학년</label><select id="cGrade"><option value="">선택</option>${[1, 2, 3].map((g) => `<option value="${g}" ${String(g) === chk.grade ? 'selected' : ''}>${g}학년</option>`).join('')}</select></div>
         </div>
-        <div class="field"><label>영역</label><select id="cArea">${CHECK_AREAS.map((a) => `<option ${a === chk.area ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
+        <div class="field"><label>영역 <span class="hint">최대 글자수 검사에 쓰여요</span></label><select id="cArea">${areaOptions(chk.areaKey)}</select></div>
+        ${chk.schoolLevel !== '고등학교' ? '<p class="note">검사 기준은 2026학년도 고등학교 기재요령입니다. 초·중학교는 글자수 등 일부 기준이 다를 수 있어요.</p>' : ''}
         ${chk.mode === 'single' ? `
           <div class="field"><label>검사할 문장 <span class="right byte-pill" id="cBytes">0 바이트</span></label>
-            <textarea id="cText" rows="10" placeholder="검사할 생기부 문장을 붙여 넣으세요.">${esc(chk.text)}</textarea></div>` : `
-          <div class="field"><label>검사할 문장들 <span class="hint">학생별 문장 사이에 빈 줄을 하나 넣어 주세요</span></label>
-            <textarea id="cMulti" rows="14" placeholder="첫 번째 학생 문장...&#10;&#10;두 번째 학생 문장...">${esc(chk.multiText)}</textarea></div>`}
-        <div class="actions"><button class="btn primary block" id="cRun">검사하기</button></div>
-        <p class="note">🔒 설정에 등록한 학생 이름은 "학생"으로 가린 뒤 AI에 보냅니다.</p>
+            <textarea id="cText" rows="10" placeholder="검사할 생기부 문장을 붙여 넣으세요.">${esc(chk.text)}</textarea></div>
+          <div class="actions"><button class="btn primary block" id="cRun">검사하기</button></div>` : multiSourceHtml()}
+        <p class="note">🔒 설정에 등록한 학생 이름과 학생 표시는 AI로 보내지 않습니다.</p>
       </div>
-      <div class="card sticky" id="cResult"></div>
+      <div class="card ${chk.mode === 'single' ? 'sticky' : ''}" id="cResult" ${chk.mode === 'multi' ? 'style="margin-top:18px"' : ''}></div>
     </div>`;
 
   $$('#chkMode button').forEach((b) => b.addEventListener('click', () => { chk.mode = b.dataset.m; renderCheck(); }));
-  $('#cLevel').addEventListener('change', (e) => { chk.schoolLevel = e.target.value; });
+  $('#cLevel').addEventListener('change', (e) => { chk.schoolLevel = e.target.value; renderCheck(); });
   $('#cYear').addEventListener('change', (e) => { chk.year = e.target.value; });
   $('#cGrade').addEventListener('change', (e) => { chk.grade = e.target.value; });
-  $('#cArea').addEventListener('change', (e) => { chk.area = e.target.value; });
+  $('#cArea').addEventListener('change', (e) => { chk.areaKey = e.target.value; });
   const ct = $('#cText');
   if (ct) {
-    const upd = () => { $('#cBytes').textContent = neisBytes(ct.value).toLocaleString() + ' 바이트'; };
+    const upd = () => {
+      const b = neisBytes(ct.value); const lim = AREAS[chk.areaKey].bytes;
+      $('#cBytes').textContent = `${b.toLocaleString()} / ${lim.toLocaleString()} 바이트`;
+      $('#cBytes').classList.toggle('over', b > lim);
+    };
     ct.addEventListener('input', () => { chk.text = ct.value; upd(); }); upd();
+    $('#cArea').addEventListener('change', upd);
+    $('#cRun').addEventListener('click', runCheckSingle);
+  } else {
+    bindMultiSource();
   }
-  $('#cMulti')?.addEventListener('input', (e) => { chk.multiText = e.target.value; });
-  $('#cRun').addEventListener('click', runCheck);
   renderCheckResult();
 }
 
-function localIssues(text) { return [...ruleCheck(text), ...endingCheck(text)]; }
-
-async function checkOne(text) {
-  const rules = localIssues(text);
-  let ai = { issues: [], revised: '', revisedBytes: 0 };
-  let aiError = '';
-  try {
-    const { body } = maskPayload({ text, grade: chk.grade, year: chk.year, area: chk.area, fast: settings.fast });
-    ai = await api('check', { ...body, schoolLevel: chk.schoolLevel });
-  } catch (e) { aiError = e.message; }
-  const seen = new Set(rules.map((r) => r.found));
-  const merged = [...rules, ...ai.issues.filter((i) => !seen.has(i.found)).map((i) => ({ ...i, suggestion: i.suggestion, source: 'AI' }))];
-  return { text, issues: merged, revised: ai.revised, revisedBytes: ai.revisedBytes, aiError, bytes: neisBytes(text) };
+// ───────── 다중 검사: 가져오기 ─────────
+function multiSourceHtml() {
+  const genCount = multi.rows.filter((r) => r.result).length;
+  const sources = [['paste', '직접 붙여넣기'], ['file', '엑셀·CSV 올리기'], ['gen', `다중 생성 결과 (${genCount})`], ['records', `내 기록 (${records.length})`]];
+  let body = '';
+  if (chk.source === 'paste') {
+    body = `<div class="field"><label>검사할 문장들 <span class="hint">학생별 문장 사이에 빈 줄을 하나 넣어 주세요</span></label>
+      <textarea id="cMulti" rows="12" placeholder="첫 번째 학생 문장...&#10;&#10;두 번째 학생 문장...">${esc(chk.multiText)}</textarea></div>`;
+  } else if (chk.source === 'file') {
+    const f = chk.file;
+    body = `<label class="drop" id="cDrop"><input type="file" id="cFile" accept=".xlsx,.xls,.csv" hidden>
+        <b>${f ? esc(f.name) : '엑셀(.xlsx) 또는 CSV 파일을 끌어다 놓거나 클릭하세요'}</b>${f ? `${f.rows.length}행 불러옴` : '첫 줄은 열 제목. 학생 열과 생기부 문장 열이 있으면 돼요'}</label>
+      ${f ? `<div class="row" style="margin-top:12px">
+        <div class="field"><label>생기부 문장 열</label><select id="cTextCol">${f.headers.map((h, i) => `<option value="${i}" ${i === f.textCol ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select></div>
+        <div class="field"><label>학생 열 <span class="hint">AI로 보내지 않음</span></label><select id="cLabelCol"><option value="-1">없음</option>${f.headers.map((h, i) => `<option value="${i}" ${i === f.labelCol ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select></div>
+      </div>` : ''}`;
+  } else if (chk.source === 'gen') {
+    body = genCount
+      ? `<p class="note">AI 생기부 생성 > 다중 생성에서 만든 결과 ${genCount}건을 가져옵니다. 검사 후 "수정본 반영"을 누르면 다중 생성 표의 결과도 바뀌어요.</p>`
+      : '<div class="empty" style="padding:24px">아직 다중 생성 결과가 없어요. <a href="#/generate?multi" style="text-decoration:underline">다중 생성</a>에서 먼저 만들어 주세요.</div>';
+  } else {
+    body = records.length
+      ? `<label class="switch" style="margin-top:6px"><input type="checkbox" id="cRecArea" ${chk.recAreaOnly ? 'checked' : ''}><span class="track"></span>선택한 영역의 기록만 가져오기</label>
+         <p class="note">내 생기부 기록에 저장한 문장을 가져옵니다. 검사 후 "수정본 반영"을 누르면 기록도 바뀌어요.</p>`
+      : '<div class="empty" style="padding:24px">저장한 기록이 없어요.</div>';
+  }
+  return `<div class="field"><label>검사할 문장 가져오기</label>
+      <div class="seg sm" id="cSource">${sources.map(([k, l]) => `<button data-s="${k}" class="${chk.source === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+    <div style="margin-top:12px">${body}</div>
+    <div class="actions">
+      <button class="btn primary" id="cRunMulti" ${chk.running ? 'disabled' : ''}>검사하기</button>
+      <button class="btn" id="cStop" ${chk.running ? '' : 'disabled'}>중지</button>
+      <button class="btn ghost" id="cDown" ${chk.multiResults && chk.multiResults.some((r) => !r.pending) ? '' : 'disabled'}>결과 엑셀로 받기</button>
+    </div>`;
 }
 
-async function runCheck() {
-  const btn = $('#cRun');
-  if (chk.mode === 'single') {
-    if (!chk.text.trim()) return toast('검사할 문장을 입력해 주세요');
-    chk.result = { text: chk.text, issues: localIssues(chk.text), revised: '', bytes: neisBytes(chk.text), pending: true };
-    renderCheckResult();
-    spinBtn(btn, true, 'AI 검토 중…');
-    chk.result = await checkOne(chk.text);
-    spinBtn(btn, false);
-    renderCheckResult();
-  } else {
-    const items = chk.multiText.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
-    if (!items.length) return toast('검사할 문장을 입력해 주세요');
-    chk.multiResults = items.map((t) => ({ text: t, issues: localIssues(t), pending: true, bytes: neisBytes(t) }));
-    renderCheckResult();
-    spinBtn(btn, true, `검사 중… 0/${items.length}`);
-    let done = 0;
-    const queue = items.map((_, i) => i);
-    const worker = async () => {
-      while (queue.length) {
-        const i = queue.shift();
-        chk.multiResults[i] = await checkOne(items[i]);
-        done++;
-        btn.innerHTML = `<span class="spin"></span>검사 중… ${done}/${items.length}`;
-        renderCheckResult();
-      }
-    };
-    await Promise.all([worker(), worker()]);
-    spinBtn(btn, false);
-    renderCheckResult();
+function bindMultiSource() {
+  $$('#cSource button').forEach((b) => b.addEventListener('click', () => { chk.source = b.dataset.s; renderCheck(); }));
+  $('#cMulti')?.addEventListener('input', (e) => { chk.multiText = e.target.value; });
+  $('#cRecArea')?.addEventListener('change', (e) => { chk.recAreaOnly = e.target.checked; });
+  const file = $('#cFile');
+  if (file) {
+    file.addEventListener('change', (e) => e.target.files[0] && loadCheckFile(e.target.files[0]));
+    const drop = $('#cDrop');
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+    drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('drag'); if (e.dataTransfer.files[0]) loadCheckFile(e.dataTransfer.files[0]); });
+  }
+  $('#cTextCol')?.addEventListener('change', (e) => { chk.file.textCol = Number(e.target.value); });
+  $('#cLabelCol')?.addEventListener('change', (e) => { chk.file.labelCol = Number(e.target.value); });
+  $('#cRunMulti').addEventListener('click', runCheckMulti);
+  $('#cStop').addEventListener('click', () => { chk.stop = true; toast('지금 검사 중인 문장까지만 마치고 멈춥니다'); });
+  $('#cDown').addEventListener('click', downloadCheck);
+}
+
+async function loadCheckFile(file) {
+  try {
+    const table = await readTable(file);
+    const headers = table[0].map((h, i) => String(h).trim() || `열${i + 1}`);
+    const rows = table.slice(1);
+    // 가장 긴 글이 들어 있는 열을 문장 열로 고른다.
+    const avgLen = headers.map((_, c) => rows.reduce((a, r) => a + String(r[c] ?? '').length, 0) / Math.max(rows.length, 1));
+    const named = headers.findIndex((h) => /특기사항|세특|행특|종합의견|문장|내용|기록|결과/.test(h));
+    const textCol = named >= 0 && avgLen[named] > 20 ? named : avgLen.indexOf(Math.max(...avgLen));
+    const labelCol = headers.findIndex((h, i) => i !== textCol && NAME_COL.test(h));
+    chk.file = { name: file.name, headers, rows: rows.map((r) => headers.map((_, i) => String(r[i] ?? '').trim())), textCol, labelCol };
+    renderCheck();
+    toast(`${rows.length}행을 불러왔어요`);
+  } catch (e) {
+    toast(e.message);
   }
 }
 
+function collectCheckItems() {
+  if (chk.source === 'paste') {
+    return chk.multiText.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean).map((text, i) => ({ label: `${i + 1}번째`, text }));
+  }
+  if (chk.source === 'file') {
+    const f = chk.file;
+    if (!f) return [];
+    return f.rows.map((r, i) => ({ label: f.labelCol >= 0 ? r[f.labelCol] || `${i + 2}행` : `${i + 2}행`, text: r[f.textCol] }))
+      .filter((x) => x.text);
+  }
+  if (chk.source === 'gen') {
+    return multi.rows.map((r, i) => ({ label: rowName(r, i), text: r.result, ref: { kind: 'gen', index: i } })).filter((x) => x.text);
+  }
+  return records.filter((r) => !chk.recAreaOnly || r.type === chk.areaKey)
+    .map((r) => ({ label: r.label || recTypeLabel(r.type), text: r.text, ref: { kind: 'record', id: r.id } }));
+}
+
+// ───────── 검사 실행 ─────────
+function overlaps(a, b) { return a && b && (a.includes(b) || b.includes(a)); }
+
+async function checkOne(text, label = '') {
+  const rules = ruleCheck(text, chk.areaKey, neisBytes);
+  let ai = { issues: [], revised: '', revisedBytes: 0, summary: '' };
+  let aiError = '';
+  try {
+    const { body } = maskPayload({ text, grade: chk.grade, year: chk.year, area: AREAS[chk.areaKey].label, fast: settings.fast }, [label]);
+    ai = await api('check', { ...body, schoolLevel: chk.schoolLevel });
+  } catch (e) { aiError = e.message; }
+  const aiIssues = ai.issues
+    .filter((i) => !rules.some((r) => overlaps(r.found, i.found)))
+    .map((i) => ({ ...i, severity: i.severity || '확인 필요', source: 'AI' }));
+  const order = { 위반: 0, '수정 권장': 1, '확인 필요': 2 };
+  const issues = [...rules, ...aiIssues].sort((a, b) => order[a.severity] - order[b.severity]);
+  return { text, label, issues, revised: ai.revised, revisedBytes: ai.revisedBytes, summary: ai.summary, aiError, bytes: neisBytes(text) };
+}
+
+async function runCheckSingle() {
+  const btn = $('#cRun');
+  if (!chk.text.trim()) return toast('검사할 문장을 입력해 주세요');
+  chk.result = { text: chk.text, issues: ruleCheck(chk.text, chk.areaKey, neisBytes), revised: '', bytes: neisBytes(chk.text), pending: true };
+  renderCheckResult();
+  spinBtn(btn, true, 'AI 검토 중…');
+  chk.result = await checkOne(chk.text);
+  spinBtn(btn, false);
+  renderCheckResult();
+}
+
+async function runCheckMulti() {
+  const items = collectCheckItems();
+  if (!items.length) return toast('검사할 문장이 없어요');
+  chk.items = items;
+  chk.running = true; chk.stop = false;
+  chk.multiResults = items.map((it) => ({ ...it, issues: ruleCheck(it.text, chk.areaKey, neisBytes), bytes: neisBytes(it.text), pending: true }));
+  renderCheck();
+  const queue = items.map((_, i) => i);
+  const worker = async () => {
+    while (queue.length && !chk.stop) {
+      const i = queue.shift();
+      chk.multiResults[i] = { ...(await checkOne(items[i].text, items[i].label)), ref: items[i].ref };
+      renderCheckResult();
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  chk.multiResults.forEach((r) => { if (r.pending) { r.pending = false; r.aiError = r.aiError || '중지되어 AI 검토를 하지 않았습니다.'; } });
+  chk.running = false;
+  renderCheck();
+}
+
+function applyRevised(r) {
+  if (!r.revised) return;
+  if (r.ref?.kind === 'gen' && multi.rows[r.ref.index]) {
+    multi.rows[r.ref.index].result = r.revised;
+    toast('다중 생성 결과에 수정본을 반영했어요');
+  } else if (r.ref?.kind === 'record') {
+    const rec = records.find((x) => x.id === r.ref.id);
+    if (rec) { rec.text = r.revised; saveRecords(); toast('기록에 수정본을 반영했어요'); }
+  } else {
+    addRecord({ type: chk.areaKey, label: r.label || '', text: r.revised });
+  }
+}
+
+function downloadCheck() {
+  const rows = [['학생', '원문', '바이트', '위반', '수정 권장', '확인 필요', '지적 사항', 'AI 수정본', '수정본 바이트', '총평']];
+  (chk.multiResults || []).forEach((r) => {
+    const n = (s) => r.issues.filter((i) => i.severity === s).length;
+    rows.push([r.label, r.text, r.bytes, n('위반'), n('수정 권장'), n('확인 필요'),
+      r.issues.map((i) => `[${i.severity}] ${i.type}: "${i.found}" → ${i.suggestion} (${i.basis})`).join('\n'),
+      r.revised || '', r.revised ? neisBytes(r.revised) : '', r.summary || r.aiError || '']);
+  });
+  downloadTable(`생기부_검사결과_${new Date().toISOString().slice(0, 10)}`, rows);
+}
+
+// ───────── 결과 표시 ─────────
 function highlight(text, issues) {
   const ranges = [];
   issues.forEach((i) => {
-    const f = i.found; if (!f || f.length < 1) return;
+    const f = i.found; if (!f || i.noHighlight) return;
     let idx = text.indexOf(f);
-    while (idx !== -1) { ranges.push([idx, idx + f.length]); idx = text.indexOf(f, idx + f.length); }
+    while (idx !== -1) { ranges.push([idx, idx + f.length, i.severity]); idx = text.indexOf(f, idx + f.length); }
   });
   ranges.sort((a, b) => a[0] - b[0]);
   let out = ''; let pos = 0;
-  ranges.forEach(([s, e]) => {
+  ranges.forEach(([s, e, sev]) => {
     if (s < pos) return;
-    out += esc(text.slice(pos, s)) + '<mark>' + esc(text.slice(s, e)) + '</mark>';
+    out += esc(text.slice(pos, s)) + `<mark class="${SEV_CLASS[sev] || ''}">` + esc(text.slice(s, e)) + '</mark>';
     pos = e;
   });
   return out + esc(text.slice(pos));
 }
 
+function sevCounts(issues) {
+  return ['위반', '수정 권장', '확인 필요'].map((s) => [s, issues.filter((i) => i.severity === s).length]);
+}
+
 function issueCards(issues) {
-  if (!issues.length) return '<div class="empty" style="padding:24px"><div class="big">👍</div>발견된 문제가 없어요.</div>';
-  return issues.map((i) => `<div class="issue">
-    <div class="issue-head"><span class="badge red">${esc(i.type)}</span><span class="found">"${esc(i.found)}"</span>
-      <span class="badge ${i.source === 'AI' ? 'blue' : ''}" style="margin-left:auto">${i.source === 'AI' ? 'AI 검토' : '규칙 검사'}</span></div>
-    <dl><dt>이유</dt><dd>${esc(i.reason)}</dd><dt>근거</dt><dd>${esc(i.basis)}</dd><dt>수정 제안</dt><dd class="fix">${esc(i.suggestion)}</dd></dl>
+  if (!issues.length) return '<div class="empty" style="padding:24px"><div class="big">👍</div>기재요령 기준으로 발견된 문제가 없어요.</div>';
+  return issues.map((i) => `<div class="issue sev-${SEV_CLASS[i.severity] || ''}">
+    <div class="issue-head"><span class="badge ${SEV_CLASS[i.severity] || ''}">${esc(i.severity)}</span><b>${esc(i.type)}</b><span class="found">"${esc(i.found)}"</span>
+      <span class="badge" style="margin-left:auto">${i.source === 'AI' ? 'AI 검토' : '규칙 검사'}</span></div>
+    <dl><dt>이유</dt><dd>${esc(i.reason)}</dd><dt>근거</dt><dd class="basis">${esc(i.basis)}</dd><dt>수정 제안</dt><dd class="fix">${esc(i.suggestion)}</dd></dl>
   </div>`).join('');
 }
 
 function resultBlock(r, idx) {
-  const n = r.issues.length;
+  const counts = sevCounts(r.issues);
+  const lim = AREAS[chk.areaKey].bytes;
   return `
     <div class="summary">
-      <div class="stat"><div class="k">개선 권장</div><div class="v ${n ? 'red' : 'green'}">${n}건</div></div>
-      <div class="stat"><div class="k">나이스 바이트</div><div class="v">${r.bytes.toLocaleString()}</div></div>
+      ${counts.map(([s, n]) => `<div class="stat"><div class="k">${s}</div><div class="v ${n ? SEV_CLASS[s] : 'green'}">${n}건</div></div>`).join('')}
+      <div class="stat"><div class="k">나이스 바이트</div><div class="v ${r.bytes > lim ? 'red' : ''}">${r.bytes.toLocaleString()}<small style="font-size:13px;color:var(--muted)"> / ${lim.toLocaleString()}</small></div></div>
     </div>
-    <div class="label">문제 구간</div>
+    ${r.summary ? `<div class="banner info" style="margin-bottom:12px">${esc(r.summary)}</div>` : ''}
+    <div class="label">문제 구간 <span class="hint">빨강 위반 · 주황 수정 권장 · 파랑 확인 필요</span></div>
     <div class="hl">${highlight(r.text, r.issues)}</div>
     <div class="label" style="margin-top:18px">항목별 검토</div>
     ${issueCards(r.issues)}
-    ${r.pending ? '<p class="note" style="margin-top:12px"><span class="spin" style="display:inline-block;width:12px;height:12px;border:2px solid var(--primary);border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite"></span> AI가 맞춤법과 문맥까지 검토하고 있어요…</p>' : ''}
+    ${r.pending ? '<p class="note" style="margin-top:12px"><span class="spin inline"></span> AI가 맞춤법, 문맥, 근거 부족까지 검토하고 있어요…</p>' : ''}
     ${r.aiError ? `<p class="err-text">AI 검토를 하지 못했습니다: ${esc(r.aiError)} (규칙 검사 결과만 표시)</p>` : ''}
-    ${r.revised ? `<div class="label" style="margin-top:18px">AI 수정본 <span class="right byte-pill">${r.revisedBytes} 바이트</span></div>
+    ${r.revised ? `<div class="label" style="margin-top:18px">AI 수정본 <span class="right byte-pill ${r.revisedBytes > lim ? 'over' : ''}">${r.revisedBytes} 바이트</span></div>
       <div class="hl" style="background:#f3f8ff;border-color:#dbe7ff">${esc(r.revised)}</div>
-      <div class="actions"><button class="btn sm primary" data-rcopy="${idx}">수정본 복사</button><button class="btn sm" data-rsave="${idx}">기록에 저장</button></div>` : ''}`;
+      <div class="actions"><button class="btn sm primary" data-rcopy="${idx}">수정본 복사</button>
+        <button class="btn sm" data-rapply="${idx}">${r.ref?.kind === 'gen' ? '다중 생성 결과에 반영' : r.ref?.kind === 'record' ? '기록에 반영' : '기록에 저장'}</button></div>` : ''}`;
 }
 
 function renderCheckResult() {
@@ -931,20 +1104,39 @@ function renderCheckResult() {
   if (!el) return;
   const bind = (getter) => {
     $$('[data-rcopy]', el).forEach((b) => b.addEventListener('click', () => copyText(getter(b.dataset.rcopy).revised)));
-    $$('[data-rsave]', el).forEach((b) => b.addEventListener('click', () => addRecord({ type: 'checked', label: '', text: getter(b.dataset.rsave).revised })));
+    $$('[data-rapply]', el).forEach((b) => b.addEventListener('click', () => applyRevised(getter(b.dataset.rapply))));
   };
   if (chk.mode === 'single') {
-    if (!chk.result) { el.innerHTML = '<div class="card-title">검사 결과</div><div class="empty"><div class="big">✓</div>문장을 넣고 <b>검사하기</b>를 누르세요.</div>'; return; }
+    if (!chk.result) { el.innerHTML = '<div class="card-title">검사 결과</div><div class="empty"><div class="big">✓</div>문장을 넣고 <b>검사하기</b>를 누르세요.<br>지적 사항마다 기재요령 쪽수를 함께 보여 드려요.</div>'; return; }
     el.innerHTML = `<div class="card-title">검사 결과</div>${resultBlock(chk.result, 0)}`;
     bind(() => chk.result);
-  } else {
-    if (!chk.multiResults) { el.innerHTML = '<div class="card-title">검사 결과</div><div class="empty"><div class="big">✓</div>여러 학생의 문장을 빈 줄로 나눠 넣고 검사하세요.</div>'; return; }
-    const total = chk.multiResults.reduce((a, r) => a + r.issues.length, 0);
-    el.innerHTML = `<div class="card-title">검사 결과 <span class="badge ${total ? 'red' : 'green'}">총 ${total}건</span></div>
-      ${chk.multiResults.map((r, i) => `<details class="multi-item" ${i === 0 ? 'open' : ''}><summary><b>${i + 1}</b><span class="t">${esc(r.text)}</span>
-        <span class="badge ${r.issues.length ? 'red' : 'green'}">${r.pending ? '검사 중' : r.issues.length + '건'}</span></summary><div>${resultBlock(r, i)}</div></details>`).join('')}`;
-    bind((i) => chk.multiResults[i]);
+    return;
   }
+  if (!chk.multiResults) {
+    el.innerHTML = '<div class="card-title">검사 결과</div><div class="empty"><div class="big">✓</div>문장을 가져온 뒤 <b>검사하기</b>를 누르세요.</div>';
+    return;
+  }
+  const done = chk.multiResults.filter((r) => !r.pending).length;
+  const total = chk.multiResults.length;
+  const all = chk.multiResults.flatMap((r) => r.issues);
+  el.innerHTML = `<div class="card-title">검사 결과 <span class="note" style="margin:0">${done} / ${total}건 완료</span>
+      <span class="right">${sevCounts(all).map(([s, n]) => `<span class="badge ${SEV_CLASS[s]}">${s} ${n}</span>`).join(' ')}</span></div>
+    <progress value="${done}" max="${total}"></progress>
+    <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>#</th><th>학생</th><th>바이트</th><th>위반</th><th>수정 권장</th><th>확인 필요</th><th>상태</th></tr></thead><tbody>
+      ${chk.multiResults.map((r, i) => {
+        const c = Object.fromEntries(sevCounts(r.issues));
+        const lim = AREAS[chk.areaKey].bytes;
+        return `<tr class="clickable" data-open="${i}"><td>${i + 1}</td><td><b>${esc(r.label)}</b></td><td><span class="byte-pill ${r.bytes > lim ? 'over' : ''}">${r.bytes}</span></td>
+          <td>${c['위반'] ? `<span class="badge red">${c['위반']}</span>` : '0'}</td><td>${c['수정 권장'] || 0}</td><td>${c['확인 필요'] || 0}</td>
+          <td>${r.pending ? '<span class="badge blue">검사 중</span>' : r.aiError ? '<span class="badge orange">규칙만</span>' : '<span class="badge green">완료</span>'}</td></tr>`;
+      }).join('')}</tbody></table></div>
+    ${chk.multiResults.map((r, i) => `<details class="multi-item" id="mi${i}"><summary><b>${i + 1}. ${esc(r.label)}</b><span class="t">${esc(r.text)}</span>
+      <span class="badge ${r.issues.some((x) => x.severity === '위반') ? 'red' : r.issues.length ? 'orange' : 'green'}">${r.pending ? '검사 중' : r.issues.length + '건'}</span></summary><div>${resultBlock(r, i)}</div></details>`).join('')}`;
+  $$('[data-open]', el).forEach((tr) => tr.addEventListener('click', () => {
+    const d = $('#mi' + tr.dataset.open); d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  bind((i) => chk.multiResults[i]);
+  const down = $('#cDown'); if (down) down.disabled = !chk.multiResults.some((r) => !r.pending);
 }
 
 // ───────────────────────── 채팅 ─────────────────────────
